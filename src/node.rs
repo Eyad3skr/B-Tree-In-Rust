@@ -1,5 +1,6 @@
 use crate::key::Key;
 use std::{cell::RefCell, rc::Rc};
+use std::fs::File;
 
 #[derive(PartialEq, Clone)]
 pub enum NodeType {
@@ -24,23 +25,23 @@ impl<T: Ord + Clone> Node<T> {
         }
     }
 
-    pub fn insert(&mut self, value: T) -> Option<NodePtr<T>> {
-        if self.node_type == NodeType::Leaf || !self.has_children() {
-            let new_key = Key {
-                value,
-                left: None,
-                right: None,
-            };
-            self.keys_vector.push(new_key);
-            // TODO : handle overflow
-            return None;
-        }
-
-        self.get_next(&value).borrow_mut().insert(value)
-    }
+    // pub fn insert(&mut self, value: T) -> Option<NodePtr<T>> {
+    //     if !self.has_children() {
+    //         let new_key = Key {
+    //             value,
+    //             left: None,
+    //             right: None,
+    //         };
+    //         self.keys_vector.push(new_key);
+    //         // TODO : handle overflow
+    //         return None;
+    //     }
+    //
+    //     self.get_next(&value).borrow_mut().insert(value)
+    // }
 
     pub fn search(&self, target: T) -> bool {
-        let found = self.find_key(&target);
+        let found = self.has_key(&target);
 
         if found {
             return true;
@@ -52,22 +53,29 @@ impl<T: Ord + Clone> Node<T> {
 
         self.get_next(&target).borrow().search(target)
     }
-
+    //Return the child pointer we should descend into for `target`.
     fn get_next(&self, target: &T) -> NodePtr<T> {
-        for key in &self.keys_vector {
-            if *target < key.value {
-                return Rc::clone(&(key.left.as_ref().unwrap()));
-            }
+        if let Some(k) = self.keys_vector.iter().find(|k| target < &k.value) {
+            return std::rc::Rc::clone(
+            k.left.as_ref().expect("malformed B-Tree: missing left child"),
+            );
         }
-        Rc::clone(
-            &(self.keys_vector[self.keys_vector.len() - 1]
-                .right
-                .as_ref()
-                .unwrap()),
+        std::rc::Rc::clone(
+        self.keys_vector
+            .last()
+            .and_then(|k| k.right.as_ref())
+            .expect("malformed B-Tree: missing right child on last key"),
         )
     }
 
-    fn find_key(&self, target: &T) -> bool {
+    pub fn leaf_insert_sorted(&mut self, value: T) {
+        match self.keys_vector.binary_search_by(|k| k.value.cmp(&value)) {
+            Ok(_) => { /* duplicate policy: ignore */ }
+            Err(i) => self.keys_vector.insert(i, Key { value, left: None, right: None }),
+        }
+    }
+    // bool function 
+    fn has_key(&self, target: &T) -> bool {
         for key in &self.keys_vector {
             if key.value == *target {
                 return true;
@@ -75,15 +83,25 @@ impl<T: Ord + Clone> Node<T> {
         }
         false
     }
-    fn has_children(&self) -> bool {
-        for key in &self.keys_vector {
-            if let Some(_) = key.right {
-                return true;
-            }
-            if let Some(_) = key.left {
-                return true;
-            }
+
+    // Helper function used in insert and search to check if the node has children 
+    pub fn has_children(&self) -> bool {
+        if let Some(last) = self.keys_vector.last() {
+            if last.right.is_some() { return true; }
         }
-        false
+        self.keys_vector.iter().any(|k| k.left.is_some())
     }
+
+    /// Collect children in B-Tree order: left of each key, then last right (if any).
+    pub fn collect_children(&self) -> Vec<NodePtr<T>> {
+        let mut ch = Vec::new();
+        for k in &self.keys_vector {
+            if let Some(l) = &k.left { ch.push(std::rc::Rc::clone(l)); }
+        }
+        if let Some(last) = self.keys_vector.last() {
+            if let Some(r) = &last.right { ch.push(std::rc::Rc::clone(r)); }
+        }
+        ch
+    }
+
 }

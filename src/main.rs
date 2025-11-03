@@ -37,7 +37,7 @@
 *       according to the rule (max = k, min = k/1. you can only merge with a node of size
 *       k/2).
 *
-*/
+*/ 
 
 pub mod btree;
 pub mod key;
@@ -46,8 +46,12 @@ pub mod node;
 use btree::BTree;
 
 fn main() {
-    let mut btree: BTree<usize> = BTree::new(4);
+    let mut btree: BTree<usize> = BTree::new(2);
+    btree.insert(10);
+    btree.insert(5);
+    btree.insert(15);
     btree.insert(20);
+    btree.print_pretty();
     println!("{}", btree.search(20));
     println!("{}", btree.search(21));
 }
