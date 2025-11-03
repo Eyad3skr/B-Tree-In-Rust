@@ -2,11 +2,11 @@
 //CRUD Operations: Insert, Search, Delete
 /*
 * We determine the maximum values in a node first as key, and the min is max/2.
-*  -> max number of children = size of node + 1 
-*  -> max = k, min = k/1. you can only merge with a node of size k/2 
+*  -> max number of children = size of node + 1
+*  -> max = k, min = k/1. you can only merge with a node of size k/2
 * search:
 *   - check whether the value is stored on the current node
-*   - if not, we check for which range in our list does the value fall 
+*   - if not, we check for which range in our list does the value fall
 *   - navigate to the chosen node using it is pointer linked to the value for a certain range
 *   - repeat
 *
@@ -22,7 +22,7 @@
 * Deletion:
 *   - search for the element and navigate
 *   - if leaf, delete and handle underflow
-*   - else, choose node successor or predecessor and replace the deleted value with it 
+*   - else, choose node successor or predecessor and replace the deleted value with it
 *   - handle underflow in the node you used its successor/predecessor
 *
 * Underflow handling:
@@ -36,53 +36,18 @@
 *       a - form new node, with your values + separator + values of node you are merging with,
 *       according to the rule (max = k, min = k/1. you can only merge with a node of size
 *       k/2).
-*       
+*
 */
 
-enum NodeType {
-    Root, Internal, Leaf
-}
+pub mod btree;
+pub mod key;
+pub mod node;
 
-#[derive(Debug, Clone)]
-struct Node<T: Ord>{
-    node_type: NodeType,
-    keys_vector: Vec<key<T>>,
-}
+use btree::BTree;
 
-struct key<T: Ord>{
-    //value, pointer to 1st and 2nd child 
-    value: T,
-    left: Node<T>,
-    right: Node<T>
-}
-
-struct btree<T: Ord>{
-    degree: usize,
-    root: Node<T>, 
-}
-
-impl<T: Ord> Node<T>{
-    pub fn new(node_type: NodeType, keys_vector: Vec<key<T>>) -> Self{
-        Self { node_type, keys_vector }
-    }
-}
-
-impl<T: Ord> btree<T>{
-    pub fn new(degree: usize) -> Self{
-
-    }
-    pub fn insert(&self, value:T){
-        
-    }
-
-    pub fn search(&self, value:T) -> bool{
-
-    }
-
-    pub fn delete(&self, value:T) -> std::io::Result<()>{
-
-    }
-} 
 fn main() {
-    println!("Hello, world!");
+    let mut btree: BTree<usize> = BTree::new(4);
+    btree.insert(20);
+    println!("{}", btree.search(20));
+    println!("{}", btree.search(21));
 }
