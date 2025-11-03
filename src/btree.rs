@@ -1,23 +1,23 @@
-use crate::key;
 use crate::key::Key;
 use crate::node::Node;
 use crate::node::NodePtr;
 use crate::node::NodeType;
 use std::cell::RefCell;
+use std::fmt::Display;
 use std::rc::Rc;
 
-pub struct BTree<T: Ord + Clone> {
+pub struct BTree<T: Ord + Clone + Display> {
     pub degree: usize,
     pub root: NodePtr<T>,
 }
 
-impl<T: Ord + Clone> BTree<T> {
+impl<T: Ord + Clone + Display> BTree<T> {
     fn max_keys(&self) -> usize {
         2 * self.degree - 1
     }
-    fn min_keys(&self) -> usize {
-        self.degree - 1
-    }
+    //fn min_keys(&self) -> usize {
+    //    self.degree - 1
+    //}
 
     pub fn new(degree: usize) -> Self {
         Self {
@@ -27,35 +27,100 @@ impl<T: Ord + Clone> BTree<T> {
     }
 
     pub fn insert(&mut self, value: T) {
-        if self.root.borrow().keys_vector.len() == self.max_keys() {
-            let old_root = Rc::clone(&self.root);
-            let new_root_ptr = Rc::new(RefCell::new(Node::new(
-                NodeType::Internal,
-                vec![Key { value: value.clone(), left: Some(old_root), right: None }],
-            )));
-            self.root = Rc::clone(&new_root_ptr);
+        let mut target_leaf: NodePtr<T> = Rc::clone(&self.root);
+        let mut path: Vec<NodePtr<T>> = Vec::new();
 
-            self.split_child_left_of(Rc::clone(&new_root_ptr), 0);
+        path.push(Rc::clone(&target_leaf));
 
-            // remove the temporary bootstrap key
-            {
-                let mut nr = new_root_ptr.borrow_mut();
-                if nr.keys_vector.len() >= 2
-                && nr.keys_vector[1].left.is_some()
-                && nr.keys_vector[1].right.is_none()
-                {
-                    nr.keys_vector.remove(1);
-                }
+        while target_leaf.borrow().has_children() {
+            target_leaf = Rc::clone(&target_leaf).borrow().get_next(&value);
+            path.push(Rc::clone(&target_leaf));
+        }
+
+        target_leaf.borrow_mut().leaf_insert_sorted(value);
+        self.handle_overflow(path);
+    }
+
+    fn handle_overflow(&mut self, nodes: Vec<NodePtr<T>>) {
+        for i in (0..(nodes.len())).rev() {
+            if nodes[i].borrow().keys_vector.len() < self.max_keys() {
+                return;
             }
 
-            self.insert_non_full(new_root_ptr, value);
-            self.root.borrow_mut().node_type = NodeType::Root;
-        } else {
-            let r = Rc::clone(&self.root);
-            self.insert_non_full(r, value);
+            // split into left node - median key - right node
+            let curr_node = Rc::clone(&nodes[i]);
+            let median_key_value = curr_node.borrow().keys_vector[self.degree - 1]
+                .value
+                .clone();
+
+            let mut new_left_keys: Vec<Key<T>> = Vec::new();
+            for i in 0..self.degree - 1 {
+                new_left_keys.push(curr_node.borrow().keys_vector[i].clone());
+            }
+
+            let new_left_node = Rc::new(RefCell::new(Node::new(
+                curr_node.borrow().node_type.clone(),
+                new_left_keys,
+            )));
+
+            let mut new_right_keys: Vec<Key<T>> = Vec::new();
+            for i in self.degree..self.max_keys() {
+                new_right_keys.push(curr_node.borrow().keys_vector[i].clone());
+            }
+
+            let new_right_node = Rc::new(RefCell::new(Node::new(
+                curr_node.borrow().node_type.clone(),
+                new_right_keys,
+            )));
+
+            let new_separator_key =
+                Key::new(median_key_value, Some(new_left_node), Some(new_right_node));
+
+            if i != 0 {
+                nodes[i - 1]
+                    .borrow_mut()
+                    .insert_key_sorted(new_separator_key);
+            } else {
+                curr_node.borrow_mut().node_type = NodeType::Internal;
+                let new_root = Node::new(NodeType::Root, vec![new_separator_key]);
+                self.root = Rc::new(RefCell::new(new_root));
+            }
         }
     }
 
+    //pub fn insert(&mut self, value: T) {
+    //    if self.root.borrow().keys_vector.len() == self.max_keys() {
+    //        let old_root = Rc::clone(&self.root);
+    //        let new_root_ptr = Rc::new(RefCell::new(Node::new(
+    //            NodeType::Internal,
+    //            vec![Key {
+    //                value: value.clone(),
+    //                left: Some(old_root),
+    //                right: None,
+    //            }],
+    //        )));
+    //        self.root = Rc::clone(&new_root_ptr);
+    //
+    //        self.split_child_left_of(Rc::clone(&new_root_ptr), 0);
+    //
+    //        // remove the temporary bootstrap key
+    //        {
+    //            let mut nr = new_root_ptr.borrow_mut();
+    //            if nr.keys_vector.len() >= 2
+    //                && nr.keys_vector[1].left.is_some()
+    //                && nr.keys_vector[1].right.is_none()
+    //            {
+    //                nr.keys_vector.remove(1);
+    //            }
+    //        }
+    //
+    //        self.insert_non_full(new_root_ptr, value);
+    //        self.root.borrow_mut().node_type = NodeType::Root;
+    //    } else {
+    //        let r = Rc::clone(&self.root);
+    //        self.insert_non_full(r, value);
+    //    }
+    //}
 
     fn insert_non_full(&self, node: NodePtr<T>, value: T) {
         let mut nb = node.borrow_mut();
@@ -66,13 +131,26 @@ impl<T: Ord + Clone> BTree<T> {
         }
 
         // choose child slot
-        enum Slot { LeftOf(usize), RightOfLast }
+        enum Slot {
+            LeftOf(usize),
+            RightOfLast,
+        }
         let (slot, child) = {
-            if let Some((i, _)) = nb.keys_vector.iter().enumerate().find(|(_, k)| value < k.value) {
+            if let Some((i, _)) = nb
+                .keys_vector
+                .iter()
+                .enumerate()
+                .find(|(_, k)| value < k.value)
+            {
                 let c = std::rc::Rc::clone(nb.keys_vector[i].left.as_ref().unwrap());
                 (Slot::LeftOf(i), c)
             } else {
-                let c = std::rc::Rc::clone(nb.keys_vector.last().and_then(|k| k.right.as_ref()).unwrap());
+                let c = std::rc::Rc::clone(
+                    nb.keys_vector
+                        .last()
+                        .and_then(|k| k.right.as_ref())
+                        .unwrap(),
+                );
                 (Slot::RightOfLast, c)
             }
         };
@@ -86,7 +164,7 @@ impl<T: Ord + Clone> BTree<T> {
             }
 
             // after split, decide side by comparing to promoted separator
-            let mut p = node.borrow_mut();
+            let p = node.borrow_mut();
             match slot {
                 Slot::LeftOf(i) => {
                     let sep = p.keys_vector[i].value.clone();
@@ -132,16 +210,29 @@ impl<T: Ord + Clone> BTree<T> {
         let right_keys = y.keys_vector.split_off(t);
         let _ = y.keys_vector.pop().expect("pop median");
 
-        let z = Node::new(if is_leaf { NodeType::Leaf } else { NodeType::Internal }, right_keys);
+        let z = Node::new(
+            if is_leaf {
+                NodeType::Leaf
+            } else {
+                NodeType::Internal
+            },
+            right_keys,
+        );
         let z_ptr = std::rc::Rc::new(std::cell::RefCell::new(z));
         let left_ptr = std::rc::Rc::clone(&child_ptr);
         drop(y);
 
-        let promoted = Key { value: median_val, left: Some(left_ptr), right: Some(z_ptr) };
+        let promoted = Key {
+            value: median_val,
+            left: Some(left_ptr),
+            right: Some(z_ptr),
+        };
 
         let mut p = parent.borrow_mut();
         p.keys_vector.insert(i, promoted);
-        if p.node_type == NodeType::Root { p.node_type = NodeType::Internal; }
+        if p.node_type == NodeType::Root {
+            p.node_type = NodeType::Internal;
+        }
     }
 
     // Split the child that sits in the "right-of-last" position
@@ -151,7 +242,8 @@ impl<T: Ord + Clone> BTree<T> {
         let child_ptr = {
             let p = parent.borrow();
             std::rc::Rc::clone(
-                p.keys_vector.last()
+                p.keys_vector
+                    .last()
                     .and_then(|k| k.right.as_ref())
                     .expect("missing last right"),
             )
@@ -164,18 +256,30 @@ impl<T: Ord + Clone> BTree<T> {
         let right_keys = y.keys_vector.split_off(t);
         let _ = y.keys_vector.pop().expect("pop median");
 
-        let z = Node::new(if is_leaf { NodeType::Leaf } else { NodeType::Internal }, right_keys);
+        let z = Node::new(
+            if is_leaf {
+                NodeType::Leaf
+            } else {
+                NodeType::Internal
+            },
+            right_keys,
+        );
         let z_ptr = std::rc::Rc::new(std::cell::RefCell::new(z));
         let left_ptr = std::rc::Rc::clone(&child_ptr);
         drop(y);
 
-        let promoted = Key { value: median_val, left: Some(left_ptr), right: Some(z_ptr) };
+        let promoted = Key {
+            value: median_val,
+            left: Some(left_ptr),
+            right: Some(z_ptr),
+        };
 
         let mut p = parent.borrow_mut();
         p.keys_vector.push(promoted);
-        if p.node_type == NodeType::Root { p.node_type = NodeType::Internal; }
+        if p.node_type == NodeType::Root {
+            p.node_type = NodeType::Internal;
+        }
     }
-
 
     pub fn search(&self, target: T) -> bool {
         self.root.borrow().search(target)
@@ -190,7 +294,7 @@ impl<T: Ord + Clone> BTree<T> {
     /// - Root line ends with "(root)"
     /// - Children lines end with "(L of k<i>)" or "(R of k<j>)"
     pub fn print_pretty(&self)
-where
+    where
         T: std::fmt::Display,
     {
         let mut out = String::new();
@@ -203,10 +307,9 @@ where
         node: &NodePtr<T>,
         prefix: &str,
         is_tail: bool,
-        from_edge: &str,   // e.g., "(L of k0)" / "(R of k2)" / "(root)"
+        from_edge: &str, // e.g., "(L of k0)" / "(R of k2)" / "(root)"
         out: &mut String,
-    )
-where
+    ) where
         T: std::fmt::Display,
     {
         use std::fmt::Write;
@@ -216,14 +319,21 @@ where
         // Render this node's keys like [a,b,c]
         let mut label = String::from("[");
         for (i, k) in n.keys_vector.iter().enumerate() {
-            if i > 0 { label.push(','); }
+            if i > 0 {
+                label.push(',');
+            }
             write!(&mut label, "{}", k.value).unwrap();
         }
         label.push(']');
 
         // Current line
-        let branch = if prefix.is_empty() { "" }
-        else if is_tail { "└── " } else { "├── " };
+        let branch = if prefix.is_empty() {
+            ""
+        } else if is_tail {
+            "└── "
+        } else {
+            "├── "
+        };
         let _ = writeln!(out, "{}{}{} {}", prefix, branch, label, from_edge);
 
         // Build ordered children with edge annotations:
@@ -257,5 +367,4 @@ where
             }
         }
     }
-
 }
